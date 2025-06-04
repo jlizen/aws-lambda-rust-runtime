@@ -33,3 +33,4 @@ async fn main() -> Result<(), Error> {
     client.call(request).await
 }
 ```
+
