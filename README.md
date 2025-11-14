@@ -1,6 +1,6 @@
 # Rust Runtime for AWS Lambda
 
-[![Build Status](https://github.com/awslabs/aws-lambda-rust-runtime/actions/workflows/check-examples.yml/badge.svg)](https://github.com/awslabs/aws-lambda-rust-runtime/actions)
+[![Build Status](https://github.com/aws/aws-lambda-rust-runtime/actions/workflows/check-examples.yml/badge.svg)](https://github.com/aws/aws-lambda-rust-runtime/actions)
 
 This package makes it easy to run AWS Lambda Functions written in Rust. This workspace includes multiple crates:
 
@@ -9,8 +9,6 @@ This package makes it easy to run AWS Lambda Functions written in Rust. This wor
 - [![Docs](https://docs.rs/lambda-extension/badge.svg)](https://docs.rs/lambda-extension) **`lambda-extension`** is a library that makes it easy to write Lambda Runtime Extensions in Rust.
 - [![Docs](https://docs.rs/aws_lambda_events/badge.svg)](https://docs.rs/aws_lambda_events) **`lambda-events`** is a library with strongly-typed Lambda event structs in Rust.
 - [![Docs](https://docs.rs/lambda_runtime_api_client/badge.svg)](https://docs.rs/lambda_runtime_api_client) **`lambda-runtime-api-client`** is a shared library between the lambda runtime and lambda extension libraries that includes a common API client to talk with the AWS Lambda Runtime API.
-
-The Rust runtime client is an experimental package. It is subject to change and intended only for evaluation purposes.
 
 ## Getting started
 
@@ -113,7 +111,7 @@ async fn handler(_event: LambdaEvent<()>) -> Result<(), ErrorResponse> {
 }
 ```
 
-We recommend you to use the [thiserror crate](https://crates.io/crates/thiserror) to declare your errors. You can see an example on how to integrate `thiserror` with the Runtime's diagnostics in our [example repository](https://github.com/awslabs/aws-lambda-rust-runtime/tree/main/examples/basic-error-thiserror)
+We recommend you to use the [thiserror crate](https://crates.io/crates/thiserror) to declare your errors. You can see an example on how to integrate `thiserror` with the Runtime's diagnostics in our [example repository](https://github.com/aws/aws-lambda-rust-runtime/tree/main/examples/basic-error-thiserror)
 
 ### Anyhow, Eyre, and Miette
 
@@ -129,7 +127,7 @@ async fn handler(_event: LambdaEvent<Request>) -> Result<(), Diagnostic> {
 }
 ```
 
-You can see more examples on how to use these error crates in our [example repository](https://github.com/awslabs/aws-lambda-rust-runtime/tree/main/examples/basic-error-error-crates-integration). 
+You can see more examples on how to use these error crates in our [example repository](https://github.com/aws/aws-lambda-rust-runtime/tree/main/examples/basic-error-error-crates-integration). 
 
 ### Graceful shutdown
 
@@ -370,7 +368,7 @@ Now you can use the `cargo lambda invoke` to send requests to your function. For
 cargo lambda invoke <lambda-function-name> --data-ascii '{ "command": "hi" }'
 ```
 
-Running the command on a HTTP function (Function URL, API Gateway, etc) will require you to use the appropriate scheme. You can find examples of these schemes [here](https://github.com/awslabs/aws-lambda-rust-runtime/tree/main/lambda-http/tests/data). Otherwise, you will be presented with the following error.
+Running the command on a HTTP function (Function URL, API Gateway, etc) will require you to use the appropriate scheme. You can find examples of these schemes [here](https://github.com/aws/aws-lambda-rust-runtime/tree/main/lambda-http/tests/data). Otherwise, you will be presented with the following error.
 
 ```rust,no_run
 Error: serde_json::error::Error
