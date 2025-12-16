@@ -154,6 +154,118 @@ pub struct SqsBatchResponse {
     pub other: serde_json::Map<String, Value>,
 }
 
+impl SqsBatchResponse {
+    /// Add a failed message ID to the batch response.
+    ///
+    /// When processing SQS messages in batches, you can use this helper method to
+    /// register individual message failures. Lambda will automatically return failed
+    /// messages to the queue for reprocessing while successfully processed messages
+    /// will be deleted.
+    ///
+    /// Besides `item_identifiers`, the generated struct will use default field values for [`BatchItemFailure`].
+    ///
+    /// **Important**: This feature requires `FunctionResponseTypes: ReportBatchItemFailures`
+    /// to be enabled in your Lambda function's SQS event source mapping configuration.
+    /// Without this setting, Lambda will retry the entire batch on any failure.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use aws_lambda_events::event::sqs::{SqsEvent, SqsBatchResponse};
+    /// use lambda_runtime::{service_fn, Error, LambdaEvent};
+    ///
+    /// async fn function_handler(
+    ///     event: LambdaEvent<SqsEvent>,
+    /// ) -> Result<SqsBatchResponse, Error> {
+    ///     // Start from a default response
+    ///     let mut response = SqsBatchResponse::default();
+    ///
+    ///     for record in event.payload.records {
+    ///         let message_id = record.message_id.clone().unwrap_or_default();
+    ///
+    ///         // Try to process the message
+    ///         if let Err(e) = process_record(&record).await {
+    ///             println!("Failed to process message {}: {}", message_id, e);
+    ///
+    ///             // Use the helper to register the failure
+    ///             response.add_failure(message_id);
+    ///         }
+    ///     }
+    ///
+    ///     Ok(response)
+    /// }
+    ///
+    /// async fn process_record(record: &aws_lambda_events::event::sqs::SqsMessage) -> Result<(), Error> {
+    ///     // Your message processing logic here
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn add_failure(&mut self, message_id: impl Into<String>) {
+        self.batch_item_failures.push(BatchItemFailure {
+            item_identifier: message_id.into(),
+            ..Default::default()
+        });
+    }
+
+    /// Set multiple failed message IDs at once.
+    ///
+    /// This is a convenience method for setting all batch item failures in one call.
+    /// It replaces any previously registered failures.
+    ///
+    /// Besides `item_identifiers`, the generated struct will use default field values for [`BatchItemFailure`].
+    ///
+    /// **Important**: This feature requires `FunctionResponseTypes: ReportBatchItemFailures`
+    /// to be enabled in your Lambda function's SQS event source mapping configuration.
+    /// Without this setting, Lambda will retry the entire batch on any failure.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use aws_lambda_events::event::sqs::{SqsEvent, SqsBatchResponse};
+    /// use lambda_runtime::{service_fn, Error, LambdaEvent};
+    ///
+    /// async fn function_handler(
+    ///     event: LambdaEvent<SqsEvent>,
+    /// ) -> Result<SqsBatchResponse, Error> {
+    ///     let mut failed_ids = Vec::new();
+    ///
+    ///     for record in event.payload.records {
+    ///         let message_id = record.message_id.clone().unwrap_or_default();
+    ///
+    ///         // Try to process the message
+    ///         if let Err(e) = process_record(&record).await {
+    ///             println!("Failed to process message {}: {}", message_id, e);
+    ///             failed_ids.push(message_id);
+    ///         }
+    ///     }
+    ///
+    ///     // Set all failures at once
+    ///     let mut response = SqsBatchResponse::default();
+    ///     response.set_failures(failed_ids);
+    ///
+    ///     Ok(response)
+    /// }
+    ///
+    /// async fn process_record(record: &aws_lambda_events::event::sqs::SqsMessage) -> Result<(), Error> {
+    ///     // Your message processing logic here
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn set_failures<I, S>(&mut self, message_ids: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.batch_item_failures = message_ids
+            .into_iter()
+            .map(|id| BatchItemFailure {
+                item_identifier: id.into(),
+                ..Default::default()
+            })
+            .collect();
+    }
+}
+
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -334,5 +446,34 @@ mod test {
         let output: String = serde_json::to_string(&parsed).unwrap();
         let reparsed: SqsApiEventObj<CustStruct> = serde_json::from_slice(output.as_bytes()).unwrap();
         assert_eq!(parsed, reparsed);
+    }
+
+    #[test]
+    #[cfg(feature = "sqs")]
+    fn example_sqs_batch_response_add_failure() {
+        let mut response = SqsBatchResponse::default();
+        response.add_failure("msg-1".to_string());
+        response.add_failure("msg-2".to_string());
+
+        assert_eq!(response.batch_item_failures.len(), 2);
+        assert_eq!(response.batch_item_failures[0].item_identifier, "msg-1");
+        assert_eq!(response.batch_item_failures[1].item_identifier, "msg-2");
+    }
+
+    #[test]
+    #[cfg(feature = "sqs")]
+    fn example_sqs_batch_response_set_failures() {
+        let mut response = SqsBatchResponse::default();
+        response.set_failures(vec!["msg-1", "msg-2", "msg-3"]);
+
+        assert_eq!(response.batch_item_failures.len(), 3);
+        assert_eq!(response.batch_item_failures[0].item_identifier, "msg-1");
+        assert_eq!(response.batch_item_failures[1].item_identifier, "msg-2");
+        assert_eq!(response.batch_item_failures[2].item_identifier, "msg-3");
+
+        // Test that set_failures replaces existing failures
+        response.set_failures(vec!["msg-4".to_string()]);
+        assert_eq!(response.batch_item_failures.len(), 1);
+        assert_eq!(response.batch_item_failures[0].item_identifier, "msg-4");
     }
 }
