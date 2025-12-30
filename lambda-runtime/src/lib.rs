@@ -94,6 +94,13 @@ where
 /// If you need more control over the runtime and add custom middleware, use the
 /// [Runtime] type directly.
 ///
+/// # Managed concurrency
+/// If `AWS_LAMBDA_MAX_CONCURRENCY` is set, this function returns an error because
+/// it does not enable concurrent polling. If your handler can satisfy `Clone`,
+/// prefer [`run_concurrent`] (requires the `experimental-concurrency` feature),
+/// which honors managed concurrency and falls back to sequential behavior when
+/// unset.
+///
 /// # Example
 /// ```no_run
 /// use lambda_runtime::{Error, service_fn, LambdaEvent};
@@ -124,6 +131,54 @@ where
 {
     let runtime = Runtime::new(handler).layer(layers::TracingLayer::new());
     runtime.run().await
+}
+
+/// Starts the Lambda Rust runtime in a mode that is compatible with
+/// Lambda Managed Instances (concurrent invocations).
+///
+/// Requires the `experimental-concurrency` feature.
+///
+/// When `AWS_LAMBDA_MAX_CONCURRENCY` is set to a value greater than 1, this
+/// will spawn `AWS_LAMBDA_MAX_CONCURRENCY` worker tasks, each running its own
+/// `/next` polling loop. When the environment variable is unset or `<= 1`, it
+/// falls back to the same sequential behavior as [`run`], so the same handler
+/// can run on both classic Lambda and Lambda Managed Instances.
+///
+/// If you need more control over the runtime and add custom middleware, use the
+/// [Runtime] type directly.
+///
+/// # Example
+/// ```no_run
+/// use lambda_runtime::{Error, service_fn, LambdaEvent};
+/// use serde_json::Value;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Error> {
+///     let func = service_fn(func);
+///     lambda_runtime::run_concurrent(func).await?;
+///     Ok(())
+/// }
+///
+/// async fn func(event: LambdaEvent<Value>) -> Result<Value, Error> {
+///     Ok(event.payload)
+/// }
+/// ```
+#[cfg(feature = "experimental-concurrency")]
+#[cfg_attr(docsrs, doc(cfg(feature = "experimental-concurrency")))]
+pub async fn run_concurrent<A, F, R, B, S, D, E>(handler: F) -> Result<(), Error>
+where
+    F: Service<LambdaEvent<A>, Response = R> + Clone + Send + 'static,
+    F::Future: Future<Output = Result<R, F::Error>> + Send + 'static,
+    F::Error: Into<Diagnostic> + fmt::Debug,
+    A: for<'de> Deserialize<'de> + Send + 'static,
+    R: IntoFunctionResponse<B, S> + Send + 'static,
+    B: Serialize + Send + 'static,
+    S: Stream<Item = Result<D, E>> + Unpin + Send + 'static,
+    D: Into<bytes::Bytes> + Send + 'static,
+    E: Into<Error> + Send + Debug + 'static,
+{
+    let runtime = Runtime::new(handler).layer(layers::TracingLayer::new());
+    runtime.run_concurrent().await
 }
 
 /// Spawns a task that will be execute a provided async closure when the process

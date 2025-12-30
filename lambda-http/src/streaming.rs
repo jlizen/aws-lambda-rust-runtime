@@ -1,4 +1,4 @@
-use crate::{http::header::SET_COOKIE, request::LambdaRequest, Request, RequestExt};
+use crate::{http::header::SET_COOKIE, request::LambdaRequest, update_xray_trace_id_header, Request, RequestExt};
 use bytes::Bytes;
 use core::{
     fmt::Debug,
@@ -25,6 +25,18 @@ use std::{future::Future, marker::PhantomData};
 pub struct StreamAdapter<'a, S, B> {
     service: S,
     _phantom_data: PhantomData<&'a B>,
+}
+
+impl<'a, S, B> Clone for StreamAdapter<'a, S, B>
+where
+    S: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            service: self.service.clone(),
+            _phantom_data: PhantomData,
+        }
+    }
 }
 
 impl<'a, S, B, E> From<S> for StreamAdapter<'a, S, B>
@@ -60,10 +72,12 @@ where
     }
 
     fn call(&mut self, req: LambdaEvent<LambdaRequest>) -> Self::Future {
-        let event: Request = req.payload.into();
+        let LambdaEvent { payload, context } = req;
+        let mut event: Request = payload.into();
+        update_xray_trace_id_header(event.headers_mut(), &context);
         Box::pin(
             self.service
-                .call(event.with_lambda_context(req.context))
+                .call(event.with_lambda_context(context))
                 .map_ok(into_stream_response),
         )
     }
@@ -93,10 +107,31 @@ where
     B::Error: Into<Error> + Send + Debug,
 {
     ServiceBuilder::new()
-        .map_request(|req: LambdaEvent<LambdaRequest>| {
-            let event: Request = req.payload.into();
-            event.with_lambda_context(req.context)
-        })
+        .map_request(event_to_request as fn(LambdaEvent<LambdaRequest>) -> Request)
+        .service(handler)
+        .map_response(into_stream_response)
+}
+
+/// Builds a streaming-aware Tower service from a `Service<Request>` that can be
+/// cloned and sent across tasks. This is used by the concurrent HTTP entrypoint.
+#[cfg(feature = "experimental-concurrency")]
+type EventToRequest = fn(LambdaEvent<LambdaRequest>) -> Request;
+
+#[cfg(feature = "experimental-concurrency")]
+#[allow(clippy::type_complexity)]
+fn into_stream_service_cloneable<S, B, E>(
+    handler: S,
+) -> MapResponse<MapRequest<S, EventToRequest>, impl FnOnce(Response<B>) -> StreamResponse<BodyStream<B>> + Clone>
+where
+    S: Service<Request, Response = Response<B>, Error = E> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+    E: Debug + Into<Diagnostic> + Send + 'static,
+    B: Body + Unpin + Send + 'static,
+    B::Data: Into<Bytes> + Send,
+    B::Error: Into<Error> + Send + Debug,
+{
+    ServiceBuilder::new()
+        .map_request(event_to_request as EventToRequest)
         .service(handler)
         .map_response(into_stream_response)
 }
@@ -128,10 +163,22 @@ where
     }
 }
 
+fn event_to_request(req: LambdaEvent<LambdaRequest>) -> Request {
+    let LambdaEvent { payload, context } = req;
+    let mut event: Request = payload.into();
+    update_xray_trace_id_header(event.headers_mut(), &context);
+    event.with_lambda_context(context)
+}
+
 /// Runs the Lambda runtime with a handler that returns **streaming** HTTP
 /// responses.
 ///
 /// See the [AWS docs for response streaming].
+///
+/// # Managed concurrency
+/// If `AWS_LAMBDA_MAX_CONCURRENCY` is set, this function returns an error because
+/// it does not enable concurrent polling. Use [`run_with_streaming_response_concurrent`]
+/// (requires the `experimental-concurrency` feature) instead.
 ///
 /// [AWS docs for response streaming]:
 ///     https://docs.aws.amazon.com/lambda/latest/dg/configuration-response-streaming.html
@@ -145,6 +192,28 @@ where
     B::Error: Into<Error> + Send + Debug,
 {
     lambda_runtime::run(into_stream_service(handler)).await
+}
+
+/// Runs the Lambda runtime with a handler that returns **streaming** HTTP
+/// responses, in a mode that is compatible with Lambda Managed Instances.
+///
+/// Requires the `experimental-concurrency` feature.
+///
+/// This uses a cloneable, boxed service internally so it can be driven by the
+/// concurrent runtime. When `AWS_LAMBDA_MAX_CONCURRENCY` is not set or `<= 1`,
+/// it falls back to the same sequential behavior as [`run_with_streaming_response`].
+#[cfg(feature = "experimental-concurrency")]
+#[cfg_attr(docsrs, doc(cfg(feature = "experimental-concurrency")))]
+pub async fn run_with_streaming_response_concurrent<S, B, E>(handler: S) -> Result<(), Error>
+where
+    S: Service<Request, Response = Response<B>, Error = E> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+    E: Debug + Into<Diagnostic> + Send + 'static,
+    B: Body + Unpin + Send + 'static,
+    B::Data: Into<Bytes> + Send,
+    B::Error: Into<Error> + Send + Debug,
+{
+    lambda_runtime::run_concurrent(into_stream_service_cloneable(handler)).await
 }
 
 pin_project_lite::pin_project! {
