@@ -9,7 +9,7 @@ members = [
     "lambda-events",
 ]
 
-exclude = ["examples"]
+exclude = ["examples","lambda-events/lambda-events-examples"]
 
 [workspace.dependencies]
 base64 = "0.22"
